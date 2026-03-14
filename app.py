@@ -9,7 +9,6 @@ from xgboost import XGBRegressor
 
 st.set_page_config(page_title="Smart Bakery Platform", layout="wide")
 
-
 # ---------------- SESSION ----------------
 
 if "landing" not in st.session_state:
