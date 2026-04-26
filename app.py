@@ -9,6 +9,7 @@ from xgboost import XGBRegressor
 
 st.set_page_config(page_title="Smart Bakery Platform", layout="wide")
 
+
 # ---------------- SESSION ----------------
 
 if "landing" not in st.session_state:
@@ -198,14 +199,35 @@ else:
 
         st.title("Bakery Sales Intelligence Dashboard")
 
-        df=pd.read_excel("sales_all_train_val_test2.xlsx")
+    # load file
+        df = pd.read_excel("sales_raw_data.xlsx")
 
-        df["Date"]=pd.to_datetime(df["Date"])
-        df["Year"]=df["Date"].dt.year
-        df["Month"]=df["Date"].dt.month
-        df["Day"]=df["Date"].dt.day_name()
+    # clean column
+        df.columns = df.columns.str.strip()
+        df.columns = df.columns.str.replace(" ", "_")
+        
+    # map column
+        if "Product_Name" in df.columns:
+            df["Productname"] = df["Product_Name"]
+        elif "ProductName" in df.columns:
+            df["Productname"] = df["ProductName"]
+        else:
+            st.error("❌ ไม่เจอ Product column")
+            st.stop()
 
-        # ---------- FILTER ----------
+        if "Sales_true" in df.columns:
+            df["Sales"] = df["Sales_true"]
+
+        if "Sales_pred" in df.columns:
+            df["Prediction"] = df["Sales_pred"]
+
+    # date
+        df["Date"] = pd.to_datetime(df["Date"], dayfirst=True)
+
+        df["Year"] = df["Date"].dt.year
+        df["Month"] = df["Date"].dt.month
+        df["Day"] = df["Date"].dt.day_name()
+    # ---------- FILTER ----------
 
         st.sidebar.header("Filter")
 
@@ -215,16 +237,27 @@ else:
             default=df["Productname"].unique()
         )
 
+        weather_filter=st.sidebar.multiselect(
+            "Weather",
+            df["Weather"].dropna().unique(),
+            default=df["Weather"].dropna().unique()
+        )
+
         start=st.sidebar.date_input("Start Date",df["Date"].min())
         end=st.sidebar.date_input("End Date",df["Date"].max())
 
         data=df[
             (df["Productname"].isin(product_filter)) &
+            (df["Weather"].isin(weather_filter)) &
             (df["Date"]>=pd.to_datetime(start)) &
             (df["Date"]<=pd.to_datetime(end))
         ]
 
-        # ---------- TREND ----------
+        if len(data)==0:
+            st.warning("No data available")
+            st.stop()
+
+    # ---------- TREND ----------
 
         trend=data.groupby("Date")["Sales"].sum().reset_index()
 
@@ -239,22 +272,18 @@ else:
         trend["Prediction"]=model.predict(X)
 
         error=abs(trend["Sales"]-trend["Prediction"])
-
         accuracy=100-(error.sum()/trend["Sales"].sum()*100)
 
-        # ---------- SALES GROWTH ----------
+    # ---------- SALES GROWTH ----------
 
         if len(trend)>1:
             first=trend["Sales"].iloc[0]
             last=trend["Sales"].iloc[-1]
-            if first != 0:
-                growth=((last-first)/first)*100
-            else:
-                growth=0
+            growth=((last-first)/first*100) if first!=0 else 0
         else:
             growth=0
 
-        # ---------- KPI ----------
+    # ---------- KPI ----------
 
         k1,k2,k3,k4=st.columns(4)
 
@@ -263,7 +292,7 @@ else:
         k3.metric("Sales Growth",f"{growth:.2f}%")
         k4.metric("Products",data["Productname"].nunique())
 
-        # ---------- PRODUCT SALES ----------
+    # ---------- PRODUCT SALES ----------
 
         product_sales=data.groupby("Productname")["Sales"].sum().reset_index()
 
@@ -274,10 +303,85 @@ else:
 
         fig2=px.bar(product_sales,x="Productname",y="Sales",color="Productname")
         fig2.update_layout(yaxis_tickprefix="€")
-
         col2.plotly_chart(fig2,use_container_width=True)
 
-        # ---------- PRODUCT CONTRIBUTION ----------
+    # ---------- WEATHER IMPACT ----------
+
+    # ---------- WEATHER IMPACT (UPGRADE) ----------
+
+        st.subheader("Weather Sales Analysis")
+
+# 🔥 group ยอดขายตามสภาพอากาศ
+        weather_summary = data.groupby("Weather").agg({
+            "Sales": ["sum", "mean", "count"]
+        }).reset_index()
+
+        weather_summary.columns = ["Weather", "Total Sales", "Avg Sales", "Days"]
+
+# ---------- KPI ----------
+        w1, w2, w3 = st.columns(3)
+
+        w1.metric("Total Weather Types", weather_summary.shape[0])
+        w2.metric("Best Weather (Avg)", weather_summary.sort_values("Avg Sales", ascending=False).iloc[0]["Weather"])
+        w3.metric("Worst Weather (Avg)", weather_summary.sort_values("Avg Sales").iloc[0]["Weather"])
+
+# ---------- BAR: TOTAL SALES ----------
+        st.markdown("### Total Sales by Weather")
+
+        fig_weather_total = px.bar(
+            weather_summary,
+            x="Weather",
+            y="Total Sales",
+            color="Weather"
+        )
+
+        st.plotly_chart(fig_weather_total, use_container_width=True)
+
+# ---------- BAR: AVG SALES ----------
+        st.markdown("### Average Sales per Day (Weather Impact)")
+
+        fig_weather_avg = px.bar(
+        weather_summary,
+            x="Weather",
+            y="Avg Sales",
+            color="Weather"
+        )
+
+        st.plotly_chart(fig_weather_avg, use_container_width=True)
+
+# ---------- TABLE ----------
+        st.markdown("### Weather Data Table")
+        st.dataframe(weather_summary)
+
+# ---------- INSIGHT AUTO ----------
+        best_weather = weather_summary.sort_values("Avg Sales", ascending=False).iloc[0]
+        worst_weather = weather_summary.sort_values("Avg Sales").iloc[0]
+
+        st.markdown(f"""
+        <div style="
+        background-color:#e3f2fd;
+        padding:20px;
+        border-radius:10px;
+        color:#0d47a1;
+        font-size:16px;
+        line-height:1.8;
+        ">
+
+        <b>Best Selling Weather :</b> {best_weather['Weather']}<br>
+        <b>Average Sales :</b> €{best_weather['Avg Sales']:.2f}<br><br>
+
+        <b>Worst Selling Weather :</b> {worst_weather['Weather']}<br>
+        <b>Average Sales :</b> €{worst_weather['Avg Sales']:.2f}<br><br>
+
+        <b>Insight :</b><br>
+        - Weather has direct impact on customer behavior<br>
+        - Use promotion strategy during low-performance weather<br>
+        - Increase stock during high-demand weather
+
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ---------- PRODUCT CONTRIBUTION ----------
 
         st.subheader("Product Contribution %")
 
@@ -292,7 +396,7 @@ else:
 
         st.plotly_chart(fig_contribution,use_container_width=True)
 
-        # ---------- ACTUAL VS PREDICTION ----------
+    # ---------- ACTUAL VS PREDICTION ----------
 
         st.subheader("Actual vs Predicted Sales")
 
@@ -301,14 +405,12 @@ else:
 
         st.plotly_chart(fig3,use_container_width=True)
 
-        # ---------- FUTURE FORECAST ----------
+    # ---------- FUTURE FORECAST ----------
 
         st.subheader("Future Sales Forecast")
 
         future_days=30
-
         future_t=np.arange(len(trend),len(trend)+future_days)
-
         future_pred=model.predict(future_t.reshape(-1,1))
 
         future_dates=pd.date_range(
@@ -326,12 +428,11 @@ else:
 
         st.plotly_chart(fig_future,use_container_width=True)
 
-        # ---------- MONTHLY TREND ----------
+    # ---------- MONTHLY TREND ----------
 
         st.subheader("Monthly Sales Trend")
 
         month=data.groupby(data["Date"].dt.to_period("M"))["Sales"].sum().reset_index()
-
         month["Date"]=month["Date"].astype(str)
 
         fig4=px.line(month,x="Date",y="Sales")
@@ -339,7 +440,7 @@ else:
 
         st.plotly_chart(fig4,use_container_width=True)
 
-        # ---------- SALES BY DAY ----------
+    # ---------- SALES BY DAY ----------
 
         st.subheader("Sales by Day of Week")
 
@@ -350,7 +451,7 @@ else:
 
         st.plotly_chart(fig5,use_container_width=True)
 
-        # ---------- HEATMAP ----------
+    # ---------- HEATMAP ----------
 
         st.subheader("Monthly Sales Heatmap")
 
@@ -360,14 +461,12 @@ else:
             index="Month",
             columns="Year",
             aggfunc="sum"
-        )
-        heat=heat.fillna(0)
+        ).fillna(0)
 
         fig6=px.imshow(heat)
-
         st.plotly_chart(fig6,use_container_width=True)
 
-        # ---------- SALES DISTRIBUTION ----------
+    # ---------- SALES DISTRIBUTION ----------
 
         st.subheader("Sales Distribution")
 
@@ -376,7 +475,7 @@ else:
 
         st.plotly_chart(fig_dist,use_container_width=True)
 
-        # ---------- PRODUCT TABLE ----------
+    # ---------- PRODUCT TABLE ----------
 
         st.subheader("Product Sales Comparison")
 
@@ -399,7 +498,7 @@ else:
             "text/csv"
         )
 
-        # ---------- EXECUTIVE SUMMARY ----------
+    # ---------- EXECUTIVE SUMMARY ----------
 
         st.subheader("Executive Summary")
 
@@ -409,207 +508,254 @@ else:
         best_day=data.groupby("Day")["Sales"].sum().idxmax()
 
         st.info(f"""
-Total Revenue : €{data['Sales'].sum():,.0f}
+    Total Revenue : €{data['Sales'].sum():,.0f}
 
-Top Product : {best_product['Productname']}
+    Top Product : {best_product['Productname']}
 
-Weak Product : {worst_product['Productname']}
+    Weak Product : {worst_product['Productname']}
 
-Best Sales Day : {best_day}
-""")
+    Best Sales Day : {best_day}
+    """)
 
-        # ---------- BUSINESS INSIGHT ----------
+    # ---------- BUSINESS INSIGHT (FIXED UI) ----------
 
         st.subheader("Business Insight")
 
-        st.success(f"""
-Best Selling Product : {best_product['Productname']}
+        weather_col = data["Weather"].astype(str)
 
-Lowest Selling Product : {worst_product['Productname']}
+        rain_sales = data[weather_col.str.contains("ฝน", na=False)]["Sales"].mean()
+        clear_sales = data[weather_col.str.contains("แจ่ม|clear", na=False)]["Sales"].mean()
 
-Recommendation :
+        rain_sales = 0 if pd.isna(rain_sales) else rain_sales
+        clear_sales = 0 if pd.isna(clear_sales) else clear_sales
 
-Increase production of {best_product['Productname']}
+        if rain_sales < clear_sales:
+            insight_weather = "Rain reduces sales"
+        else:
+            insight_weather = "Rain increases sales"
 
-Create promotion for {worst_product['Productname']}
-""")
+        st.markdown(f"""
+        <div style="
+        background-color:#d4edda;
+        padding:20px;
+        border-radius:10px;
+        color:#155724;
+        font-size:16px;
+        line-height:1.8;
+        ">
+
+        <b>Best Selling Product :</b> {best_product['Productname']}<br>
+        <b>Lowest Selling Product :</b> {worst_product['Productname']}<br><br>
+
+        <b>Recommendation :</b><br>
+        - Increase production of {best_product['Productname']}<br>
+        - Create promotion for {worst_product['Productname']}<br>
+        - {insight_weather}
+
+        </div>
+        """, unsafe_allow_html=True)
 
 # ================= UPLOAD PAGE =================
+    # ================= UPLOAD PAGE (FULL DASHBOARD) =================
 
-    # ================= UPLOAD PAGE =================
+    if page == "Upload Excel":
 
-    if page=="Upload Excel":
-
-        st.title("Upload Excel Sales Data")
+        st.title("Upload Excel Sales Dashboard")
 
         file = st.file_uploader("Upload Excel", type=["xlsx"])
 
         if file:
 
+        # ---------- LOAD ----------
             df = pd.read_excel(file)
 
-            df["Date"] = pd.to_datetime(df["Date"])
+        # ---------- CLEAN ----------
+            df.columns = df.columns.str.strip()
+            df.columns = df.columns.str.replace(" ", "_")
+
+            df = df.rename(columns={
+                "Product_Name": "Productname",
+                "Sales_true": "Sales",
+                "Sales_pred": "Prediction"
+            })
+
+            df["Date"] = pd.to_datetime(df["Date"], dayfirst=True)
+            df["Weather"] = df["Weather"].astype(str).str.strip()
+
+            df["Year"] = df["Date"].dt.year
+            df["Month"] = df["Date"].dt.month
+            df["Day"] = df["Date"].dt.day_name()
 
             st.success("Upload Successful")
 
-            st.subheader("Preview Data")
-
-            st.dataframe(df.head())
-
-            # ---------------- FILTER ----------------
-
-            st.sidebar.header("Upload Data Filter")
+        # ---------- FILTER ----------
+            st.sidebar.header("Upload Filter")
 
             product_filter = st.sidebar.multiselect(
-                "Select Product",
+                "Product",
                 df["Productname"].unique(),
                 default=df["Productname"].unique()
             )
 
-            start_date = st.sidebar.date_input(
-                "Start Date",
-                df["Date"].min()
+            weather_filter = st.sidebar.multiselect(
+                "Weather",
+                df["Weather"].dropna().unique(),
+                default=df["Weather"].dropna().unique()
             )
 
-            end_date = st.sidebar.date_input(
-                "End Date",
-                df["Date"].max()
-            )
+            start = st.sidebar.date_input("Start Date", df["Date"].min())
+            end = st.sidebar.date_input("End Date", df["Date"].max())
 
             data = df[
                 (df["Productname"].isin(product_filter)) &
-                (df["Date"] >= pd.to_datetime(start_date)) &
-                (df["Date"] <= pd.to_datetime(end_date))
+                (df["Weather"].isin(weather_filter)) &
+                (df["Date"] >= pd.to_datetime(start)) &
+                (df["Date"] <= pd.to_datetime(end))
             ]
 
-            # ---------------- KPI ----------------
+            if len(data) == 0:
+                st.warning("No data available")
+                st.stop()
 
-            st.subheader("Sales Summary")
+        # ---------- KPI ----------
+            k1, k2, k3, k4 = st.columns(4)
 
-            k1,k2,k3 = st.columns(3)
+            k1.metric("Total Sales", f"€{data['Sales'].sum():,.0f}")
+            k2.metric("Records", len(data))
+            k3.metric("Products", data["Productname"].nunique())
+            k4.metric("Avg Sales", f"€{data['Sales'].mean():.2f}")
 
-            k1.metric("Total Sales",f"€{data['Sales'].sum():,.0f}")
-            k2.metric("Products", data["Productname"].nunique())
-            k3.metric("Records", len(data))
+        # ---------- PRODUCT ----------
+            product_sales = data.groupby("Productname")["Sales"].sum().reset_index()
 
-            # ---------------- SALES TREND ----------------
+            col1, col2 = st.columns(2)
 
+            fig1 = px.pie(product_sales, names="Productname", values="Sales")
+            col1.plotly_chart(fig1, use_container_width=True)
+
+            fig2 = px.bar(product_sales, x="Productname", y="Sales", color="Productname")
+            col2.plotly_chart(fig2, use_container_width=True)
+
+        # ---------- WEATHER ----------
+            st.subheader("Weather Impact")
+
+            weather_sales = data.groupby("Weather")["Sales"].mean().reset_index()
+
+            fig_weather = px.bar(
+                weather_sales,
+                x="Weather",
+                y="Sales",
+                color="Weather"
+            )
+
+            st.plotly_chart(fig_weather, use_container_width=True)
+
+        # ---------- TREND ----------
             st.subheader("Sales Trend")
 
             trend = data.groupby("Date")["Sales"].sum().reset_index()
 
-            fig1 = px.line(
-                trend,
-                x="Date",
-                y="Sales"
-            )
-            fig1.update_layout(yaxis_tickprefix="€")
+            fig3 = px.line(trend, x="Date", y="Sales")
+            st.plotly_chart(fig3, use_container_width=True)
 
-            st.plotly_chart(fig1, use_container_width=True)
+        # ---------- HEATMAP ----------
+            st.subheader("Heatmap")
 
-            # ---------------- PRODUCT SHARE ----------------
-
-            st.subheader("Product Share")
-
-            product_sales = data.groupby("Productname")["Sales"].sum().reset_index()
-
-            col1,col2 = st.columns(2)
-
-            fig2 = px.pie(
-                product_sales,
-                names="Productname",
-                values="Sales"
-            )
-
-            col1.plotly_chart(fig2, use_container_width=True)
-
-            fig3 = px.bar(
-                product_sales,
-                x="Productname",
-                y="Sales",
-                color="Productname"
-            )
-
-            col2.plotly_chart(fig3, use_container_width=True)
-
-            # ---------------- SALES DISTRIBUTION ----------------
-
-            st.subheader("Sales Distribution")
-
-            fig4 = px.histogram(
+            heat = pd.pivot_table(
                 data,
-                x="Sales",
-                nbins=30
-            )
+                values="Sales",
+                index="Month",
+                columns="Year",
+                aggfunc="sum"
+            ).fillna(0)
 
-            st.plotly_chart(fig4, use_container_width=True)
+            fig6 = px.imshow(heat)
+            st.plotly_chart(fig6, use_container_width=True)
 
-            # ---------------- DAILY SALES ----------------
-
-            st.subheader("Daily Sales")
-
-
-            daily = data.groupby(data["Date"].dt.day_name())["Sales"].sum().reset_index()
-
-            daily.columns=["Day","Sales"]
-
-            fig5 = px.bar(
-                daily,
-                x="Day",
-                y="Sales"
-            )
-
-            st.plotly_chart(fig5, use_container_width=True)
-
-            # ---------------- TABLE ----------------
-
-            st.subheader("Sales Table")
+        # ---------- TABLE ----------
+            st.subheader("Data Table")
 
             st.dataframe(data)
 
-            csv = data.to_csv().encode("utf-8")
+            csv = data.to_csv(index=False).encode("utf-8")
 
             st.download_button(
                 "Download Data",
                 csv,
-                "upload_sales_data.csv",
+                "upload_data.csv",
                 "text/csv"
             )
 
-            # ================= XGBOOST FORECAST =================
+        # ---------- BUSINESS INSIGHT ----------
+            st.subheader("Business Insight")
+
+            best_product = product_sales.sort_values("Sales", ascending=False).iloc[0]
+            worst_product = product_sales.sort_values("Sales").iloc[0]
+
+            st.markdown(f"""
+            <div style="
+            background-color:#d4edda;
+            padding:20px;
+            border-radius:10px;
+            color:#155724;
+            font-size:16px;
+            ">
+
+            <b>Best Product :</b> {best_product['Productname']}<br>
+            <b>Worst Product :</b> {worst_product['Productname']}<br><br>
+
+            <b>Recommendation :</b><br>
+            - Increase production of {best_product['Productname']}<br>
+            - Promote {worst_product['Productname']}
+
+            </div>
+            """, unsafe_allow_html=True)
+    
+
+# ================= XGBOOST FORECAST =================
 # ================= SALES FORECAST =================
+# ================= XGBOOST FORECAST =================
 
     if page=="Sales Forecast":
 
-        st.title("Sales Forecast (Machine Learning)")
+        st.title("Sales Forecast (Machine Learning - XGBoost)")
 
-        # ---------- LOAD DATA ----------
+    # ---------- LOAD DATA ----------
+        sales_df = pd.read_excel("sales_raw_data.xlsx")
 
-        sales_df = pd.read_excel("sales_all_train_val_test2.xlsx")
-        forecast_df = pd.read_excel("forecast_output.xlsx")
+    # ---------- CLEAN ----------
+        sales_df.columns = sales_df.columns.str.strip()
+        sales_df.columns = sales_df.columns.str.replace(" ", "_")
 
-        sales_df["Date"] = pd.to_datetime(sales_df["Date"])
-        forecast_df["Date"] = pd.to_datetime(forecast_df["Date"])
+    # ---------- MAP COLUMN ----------
+        if "Product_Name" in sales_df.columns:
+            sales_df["Productname"] = sales_df["Product_Name"]
+        elif "ProductName" in sales_df.columns:
+            sales_df["Productname"] = sales_df["ProductName"]
+        elif "Productname" not in sales_df.columns:
+            st.error("❌ ไม่เจอ Product column")
+            st.write(sales_df.columns)
+            st.stop()
 
-        # ---------- FILTER ----------
+        if "Sales_true" in sales_df.columns:
+            sales_df["Sales"] = sales_df["Sales_true"]
+        elif "Sales" not in sales_df.columns:
+            st.error("❌ ไม่เจอ Sales column")
+            st.stop()
 
+        sales_df["Date"] = pd.to_datetime(sales_df["Date"], errors="coerce")
+
+    # ---------- FILTER ----------
         st.sidebar.header("Forecast Filter")
 
         product_filter = st.sidebar.multiselect(
             "Product",
-            sales_df["Productname"].unique(),
-            default=sales_df["Productname"].unique()
+            sales_df["Productname"].dropna().unique(),
+            default=sales_df["Productname"].dropna().unique()
         )
 
-        start = st.sidebar.date_input(
-            "Start Date",
-            sales_df["Date"].min()
-        )
-
-        end = st.sidebar.date_input(
-            "End Date",
-            sales_df["Date"].max()
-        )
+        start = st.sidebar.date_input("Start Date", sales_df["Date"].min())
+        end = st.sidebar.date_input("End Date", sales_df["Date"].max())
 
         data = sales_df[
             (sales_df["Productname"].isin(product_filter)) &
@@ -621,86 +767,159 @@ Create promotion for {worst_product['Productname']}
             st.warning("No data available")
             st.stop()
 
-        # ---------- KPI ----------
-
+    # ---------- KPI ----------
         k1,k2,k3 = st.columns(3)
-
         k1.metric("Total Sales",f"€{data['Sales'].sum():,.0f}")
         k2.metric("Products",data["Productname"].nunique())
         k3.metric("Records",len(data))
 
-        # ---------- ACTUAL SALES TREND ----------
-
+    # ---------- ACTUAL ----------
         st.subheader("Actual Sales Trend")
 
         actual_trend = data.groupby("Date")["Sales"].sum().reset_index()
-
-        fig1 = px.line(
-            actual_trend,
-            x="Date",
-            y="Sales"
-        )
-
+        fig1 = px.line(actual_trend, x="Date", y="Sales")
         fig1.update_layout(yaxis_tickprefix="€")
-
         st.plotly_chart(fig1,use_container_width=True)
 
-        # ---------- FORECAST DATA ----------
+    # =====================================================
+    # 🤖 XGBOOST MODEL
+    # =====================================================
+        from xgboost import XGBRegressor
+        import numpy as np
 
-        st.subheader("Sales Forecast (ML Model Output)")
+        st.subheader("Sales Forecast (2017-2019 Full Range)")
 
-        forecast_data = forecast_df[
-            forecast_df["Productname"].isin(product_filter)
-        ]
+        forecast_list = []
 
+        for product in product_filter:
+
+            sub = data[data["Productname"] == product]
+            daily = sub.groupby("Date")["Sales"].sum().reset_index()
+
+            if len(daily) < 2:
+                continue
+
+        # ---------- FEATURE ----------
+            daily["day"] = daily["Date"].dt.day
+            daily["month"] = daily["Date"].dt.month
+            daily["dow"] = daily["Date"].dt.dayofweek
+
+            daily["lag1"] = daily["Sales"].shift(1)
+            daily["lag7"] = daily["Sales"].shift(7)
+
+            daily = daily.dropna()
+
+            if len(daily) < 2:
+                continue
+
+            X = daily[["day","month","dow","lag1","lag7"]]
+            y = daily["Sales"]
+
+            model = XGBRegressor(n_estimators=200, learning_rate=0.05, max_depth=5)
+            model.fit(X,y)
+
+        # ---------- FULL RANGE FORECAST ----------
+            full_dates = pd.date_range(start="2017-01-01", end="2019-12-31")
+            future = pd.DataFrame({"Date": full_dates})
+
+            future["day"] = future["Date"].dt.day
+            future["month"] = future["Date"].dt.month
+            future["dow"] = future["Date"].dt.dayofweek
+
+            last_sales = daily.set_index("Date")["Sales"].copy()
+
+            preds = []
+
+            for i in range(len(future)):
+
+                current_date = future.iloc[i]["Date"]
+
+                lag1 = last_sales.get(current_date - pd.Timedelta(days=1), last_sales.iloc[-1])
+                lag7 = last_sales.get(current_date - pd.Timedelta(days=7), last_sales.iloc[-1])
+
+                row = [[
+                    future.iloc[i]["day"],
+                    future.iloc[i]["month"],
+                    future.iloc[i]["dow"],
+                    lag1,
+                    lag7
+                ]]
+
+                pred = model.predict(row)[0]
+
+                preds.append(pred)
+                last_sales.loc[current_date] = pred
+
+            future["Sales_forecast"] = preds
+            future["Productname"] = product
+
+        # 🔥 สำคัญมาก (คุณลืมตรงนี้)
+            forecast_list.append(future)
+
+    # ---------- CHECK ----------
+        if len(forecast_list) == 0:
+            st.error("❌ Data not enough for forecasting")
+            st.stop()
+
+        forecast_data = pd.concat(forecast_list)
+
+    # ---------- FORECAST GRAPH ----------
         fig2 = px.line(
             forecast_data,
             x="Date",
-            y="Sales_forecast"
+            y="Sales_forecast",
+            color="Productname"
         )
-
         fig2.update_layout(yaxis_tickprefix="€")
-
         st.plotly_chart(fig2,use_container_width=True)
 
-        # ---------- ACTUAL VS FORECAST ----------
+    # ---------- COMPARE ----------
+        st.subheader("Actual vs Forecast")
 
-        st.subheader("Actual vs Forecast Comparison")
-
-        actual = actual_trend.copy()
-        forecast = forecast_data.groupby("Date")["Sales_forecast"].sum().reset_index()
+        forecast_sum = forecast_data.groupby("Date")["Sales_forecast"].sum().reset_index()
 
         merged = pd.merge(
-            actual,
-            forecast,
+            actual_trend,
+            forecast_sum,
             on="Date",
             how="outer"
         ).fillna(0)
 
-        fig3 = px.line(
-            merged,
-            x="Date",
-            y=["Sales","Sales_forecast"]
-        )
-
+        fig3 = px.line(merged, x="Date", y=["Sales","Sales_forecast"])
         fig3.update_layout(yaxis_tickprefix="€")
-
         st.plotly_chart(fig3,use_container_width=True)
 
-        # ---------- FORECAST TABLE ----------
-
-        st.subheader("Forecast Data Table")
-
+    # ---------- TABLE ----------
+        st.subheader("Forecast Data")
         st.dataframe(forecast_data)
 
-        csv = forecast_data.to_csv().encode("utf-8")
+        csv = forecast_data.to_csv(index=False).encode("utf-8")
 
         st.download_button(
             "Download Forecast",
             csv,
-            "forecast_output.csv",
+            "forecast_xgboost.csv",
             "text/csv"
         )
+
+    # ---------- INSIGHT ----------
+        st.subheader("AI Insight")
+
+        peak_row = forecast_data.sort_values("Sales_forecast", ascending=False).head(1)
+
+        peak_date = pd.to_datetime(peak_row["Date"].values[0]).date()
+
+        best_product = forecast_data.groupby("Productname")["Sales_forecast"].sum().idxmax()
+
+        st.success(f"""
+    🔥 Top product: {best_product}
+    📈 Peak date: {peak_date}
+    📦 Recommendation: Increase stock before peak
+    """)
+
+        st.caption("Model: XGBoost (lag1, lag7)")
+
+
 
 st.markdown("""
 <style>
