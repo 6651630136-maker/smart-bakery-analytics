@@ -309,7 +309,18 @@ else:
 
     # ---------- WEATHER IMPACT (UPGRADE) ----------
 
+
         st.subheader("Weather Sales Analysis")
+
+# ✅ CLEAN WEATHER (สำคัญมาก)
+        data["Weather"] = data["Weather"].astype(str).str.strip()
+        data["Weather"] = data["Weather"].replace("", "Unknown")
+        data["Weather"] = data["Weather"].fillna("Unknown")
+
+# ❗ กัน data ว่าง
+        if data.empty:
+            st.warning("No data available for Weather Analysis")
+            st.stop()
 
 # 🔥 group ยอดขายตามสภาพอากาศ
         weather_summary = data.groupby("Weather").agg({
@@ -318,12 +329,24 @@ else:
 
         weather_summary.columns = ["Weather", "Total Sales", "Avg Sales", "Days"]
 
+# ❗ กัน groupby ว่าง
+        if len(weather_summary) == 0:
+            st.warning("No weather data to display")
+            st.stop()
+
 # ---------- KPI ----------
         w1, w2, w3 = st.columns(3)
 
         w1.metric("Total Weather Types", weather_summary.shape[0])
-        w2.metric("Best Weather (Avg)", weather_summary.sort_values("Avg Sales", ascending=False).iloc[0]["Weather"])
-        w3.metric("Worst Weather (Avg)", weather_summary.sort_values("Avg Sales").iloc[0]["Weather"])
+
+        best_weather = weather_summary.sort_values("Avg Sales", ascending=False).iloc[0]
+        worst_weather = weather_summary.sort_values("Avg Sales").iloc[0]
+
+        w2.metric("Best Weather (Avg)", best_weather["Weather"])
+        w3.metric("Worst Weather (Avg)", worst_weather["Weather"])
+
+# ---------- SORT ให้สวย ----------
+        weather_summary = weather_summary.sort_values("Total Sales", ascending=False)
 
 # ---------- BAR: TOTAL SALES ----------
         st.markdown("### Total Sales by Weather")
@@ -341,7 +364,7 @@ else:
         st.markdown("### Average Sales per Day (Weather Impact)")
 
         fig_weather_avg = px.bar(
-        weather_summary,
+            weather_summary,
             x="Weather",
             y="Avg Sales",
             color="Weather"
@@ -353,10 +376,7 @@ else:
         st.markdown("### Weather Data Table")
         st.dataframe(weather_summary)
 
-# ---------- INSIGHT AUTO ----------
-        best_weather = weather_summary.sort_values("Avg Sales", ascending=False).iloc[0]
-        worst_weather = weather_summary.sort_values("Avg Sales").iloc[0]
-
+# ---------- INSIGHT ----------
         st.markdown(f"""
         <div style="
         background-color:#e3f2fd;
